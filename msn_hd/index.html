@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>MSN Link Browser</title>
+<style>
+/* Layout: one IGV-style bar (gene, TF, network, MSN type), igv.js full width, the gene's link table folded underneath.
+   Plain scientific-tool look on purpose (the user's choice for these pages): system sans, flat grey panels, classic colours.
+   Single light theme by choice, matching igv.js, which draws on white. */
+:root {
+  --bg: #ffffff; --panel: #f0f0f0; --line: #c8c8c8; --ink: #1a1a1a; --muted: #5a5a5a; --accent: #1f5fbf; --sel: #dde8f8; --motif: #c42020;
+  --bA: #109648; --bC: #255c99; --bG: #f7b32b; --bT: #d62839;
+  --f-sans: Helvetica, Arial, sans-serif; --f-mono: Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.4 var(--f-sans); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 10px 24px; }
+h1 { font-size: 15px; margin: 0; font-weight: 700; }
+.sub { color: var(--muted); font-size: 12px; margin: 2px 0 8px; max-width: 80ch; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; background: var(--panel); border: 1px solid var(--line); padding: 6px 8px; }
+.bar label { display: flex; gap: 5px; align-items: center; font-weight: 700; font-size: 12px; }
+.bar input[type=text] { font: 13px var(--f-sans); width: 9em; padding: 2px 4px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+.seg { display: flex; flex-wrap: wrap; }
+.seg button { font: 12px var(--f-sans); border: 1px solid var(--line); background: var(--bg); color: var(--ink); padding: 2px 7px; margin-left: -1px; cursor: pointer; }
+.seg button[aria-pressed=true] { background: var(--accent); color: #fff; border-color: var(--accent); }
+button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#status { color: var(--muted); font-size: 12px; min-width: 0; }
+#igv { margin-top: 6px; border: 1px solid var(--line); min-height: 200px; }
+details { margin-top: 10px; border: 1px solid var(--line); }
+summary { background: var(--panel); padding: 4px 8px; cursor: pointer; font-weight: 700; font-size: 12px; }
+.tbl { overflow-x: auto; max-height: 360px; overflow-y: auto; }
+table.links { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; width: 100%; }
+.links th, .links td { text-align: left; padding: 2px 8px; border-bottom: 1px solid var(--panel); white-space: nowrap; }
+.links th { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); vertical-align: bottom; }
+.links th.grp { border-left: 1px solid var(--line); }
+.links tbody tr { cursor: pointer; }
+.links tbody tr:hover { background: var(--panel); }
+.links tbody tr[aria-selected=true] { background: var(--sel); }
+.links td.num, .links th.num { text-align: right; font-family: var(--f-mono); }
+.links th button.sort { font: inherit; font-weight: 700; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: inherit; }
+.links th button.sort::after { content: " \2195"; color: var(--muted); font-weight: 400; }
+.links th[aria-sort=ascending] button.sort::after { content: " \25B2"; color: var(--accent); }
+.links th[aria-sort=descending] button.sort::after { content: " \25BC"; color: var(--accent); }
+.links td.l { border-left: 1px solid var(--line); }
+.up { color: #b2182b; } .down { color: #2166ac; } .na { color: var(--muted); }
+.note { color: var(--muted); font-size: 12px; max-width: 85ch; padding: 6px 8px 6px 26px; margin: 0; }
+.note li { margin: 3px 0; }
+/* motif hover box */
+#mtip { position: fixed; z-index: 10000; display: none; background: #fff; border: 1px solid #777; padding: 6px 8px; font: 12px/1.35 var(--f-sans);
+  pointer-events: none; max-width: calc(100vw - 24px); overflow: hidden; }
+#mtip .hd { font-weight: 700; color: var(--motif); }
+#mtip .meta { color: var(--muted); }
+#mtip .mono { font-family: var(--f-mono); }
+#mtip table.pwm { border-collapse: collapse; table-layout: fixed; margin-top: 4px; font: 11px var(--f-mono); }
+#mtip .pwm th { text-align: right; padding: 0 6px 0 0; font: 700 11px var(--f-sans); color: var(--muted); white-space: nowrap; }
+#mtip .pwm td { width: 22px; min-width: 22px; max-width: 22px; text-align: center; padding: 0; height: 16px; }
+#mtip .pwm tr.seq td { font-weight: 700; font-size: 12px; }
+#mtip .pwm td.mm { background: #fde0dd; }
+#mtip .pwm tr.sep td, #mtip .pwm tr.sep th { border-top: 1px solid var(--line); }
+#mtip .pwm td.lg { padding: 0; height: auto; }
+#mtip canvas { display: block; }
+</style>
+</head>
+<body>
+<h1>MSN link browser (igv.js)</h1>
+<p class="sub">Type a gene, then pick a TF in the bar or in the table. Every chromosome loads on demand (about 10 MB each). Loop height on a fixed 0–1 scale: |r| between region and gene (Epiregulon) or predicted binding (ANANSE). Hover over a motif match for its sequence and motif. Zoom in to base level to see the DNA sequence (hg38, read from UCSC). Click a table column header to sort; click again to flip.</p>
+
+<div class="bar" role="toolbar" aria-label="Link filters">
+  <label for="q-gene">Gene <input type="text" id="q-gene" value="PDE10A" spellcheck="false" autocomplete="off"></label>
+  <label for="q-tf">TF <input type="text" id="q-tf" list="tf-list" spellcheck="false" autocomplete="off"></label>
+  <datalist id="tf-list"></datalist>
+  <span class="seg" id="net-seg" aria-label="Network"></span>
+  <span class="seg" id="ctx-seg" aria-label="MSN type"></span>
+  <label for="o-others"><input type="checkbox" id="o-others"> all loops of the gene</label>
+  <span id="status">Loading data…</span>
+</div>
+
+<div id="igv"></div>
+<div id="mtip" role="tooltip"></div>
+
+<details open id="tbl-box">
+  <summary id="tbl-sum">Links for the gene</summary>
+  <div class="tbl"><table class="links">
+    <thead id="tbl-head">
+      <tr><th rowspan="2" data-k="tf"><button type="button" class="sort" data-k="tf">TF</button></th><th rowspan="2">Gene</th><th rowspan="2" class="num" data-k="w"><button type="button" class="sort" data-k="w">Weight</button></th><th rowspan="2" class="num" data-k="nreg"><button type="button" class="sort" data-k="nreg">Regions</button></th>
+        <th colspan="4" class="grp" id="tfx-head">TF expression</th></tr>
+      <tr><th class="num grp" data-k="tpmC"><button type="button" class="sort" data-k="tpmC">TPM Control</button></th><th class="num" data-k="tpmH"><button type="button" class="sort" data-k="tpmH">TPM HD</button></th><th class="num" data-k="fc"><button type="button" class="sort" data-k="fc">log2FC HD/Ctrl</button></th><th class="num" data-k="padj"><button type="button" class="sort" data-k="padj">padj</button></th></tr>
+    </thead>
+    <tbody id="tbl"></tbody></table></div>
+</details>
+
+<script src="https://cdn.jsdelivr.net/npm/igv@3.8.10/dist/igv.min.js"></script>
+<meta name="robots" content="noindex, nofollow">
+<script src="../gate.js"></script>
+<script>
+(() => {
+"use strict";
+const $ = (id) => document.getElementById(id);
+const S = { net: 1, ct: 0, gene: "PDE10A", tf: "", others: false, rows: [], link: null };
+let M, P, N, NX, NC, CONDS, TRK, ATRK, tfIdx, geneIdx, PWM = {}, TFX = null, browser;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const status = (t) => { $("status").textContent = t; };
+const fmtInt = (v) => Math.round(v).toLocaleString("en-US");
+// hg38 chromosome sizes (copied from site_igv_test/data/hg38.chrom.sizes.txt); the genome when opened as a local file, or if UCSC can't be reached: an in-memory File (no fetch)
+const CHROM_SIZES = "chr1\t248956422\nchr2\t242193529\nchr3\t198295559\nchr4\t190214555\nchr5\t181538259\nchr6\t170805979\nchr7\t159345973\nchr8\t145138636\nchr9\t138394717\nchr10\t133797422\nchr11\t135086622\nchr12\t133275309\nchr13\t114364328\nchr14\t107043718\nchr15\t101991189\nchr16\t90338345\nchr17\t83257441\nchr18\t80373285\nchr19\t58617616\nchr20\t64444167\nchr21\t46709983\nchr22\t50818468\nchrX\t156040895\nchrY\t57227415\n";
+
+// ---------- data loading ----------
+// Public site: each data file is data/<name>.gz.enc = 12-byte IV + AES-256-GCM(gzip(json)), decrypted by gate.js (grnDecrypt).
+const LOCAL = location.protocol === "file:";
+async function getJSON(name) {
+  const r = await fetch(`data/${name}.gz.enc`); if (!r.ok) throw new Error(`${name} ${r.status}`);
+  const u = new Uint8Array(await grnDecrypt(await r.arrayBuffer()));   // encrypted for the public site (gate.js)
+  const raw = await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+  return JSON.parse(new TextDecoder().decode(raw));
+}
+function b64(s, T) { const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return new T(u.buffer, 0, u.length / T.BYTES_PER_ELEMENT); }
+function lowerBound(arr, v) { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < v) lo = m + 1; else hi = m; } return lo; }
+const RNAQ = Float32Array.from({ length: 256 }, (_, q) => (2 ** (q / 16) - 1) / 100);         // byte -> CPM
+function coverage(j, t) {
+  const expand = (s, n, w, T) => { const st = b64(s, Uint32Array), nn = b64(n, T), tot = nn.reduce((a, v) => a + v, 0), out = new Uint32Array(tot);
+    let k = 0; for (let r = 0; r < st.length; r++) for (let i = 0; i < nn[r]; i++) out[k++] = st[r] + i * w; return out; };
+  return { cS: expand(j.cs, j.cn, t.coarse, Uint32Array), fS: expand(j.fs, j.fn, t.fine, Uint16Array), c: b64(j.coarse, Uint8Array), f: b64(j.fine, Uint8Array), CW: t.coarse, FW: t.fine };
+}
+
+// one chromosome's data, loaded when first needed; at most 3 decoded chromosomes kept (the shown one never dropped)
+const SHARDS = new Map();
+function shard(chr) {
+  if (!M.chroms[chr]) return Promise.resolve(null);
+  let p = SHARDS.get(chr);
+  if (p) { SHARDS.delete(chr); SHARDS.set(chr, p); return p; }
+  p = loadShard(chr); SHARDS.set(chr, p); p.catch(() => SHARDS.delete(chr));
+  for (const k of [...SHARDS.keys()]) { if (SHARDS.size <= 3) break; if (k !== chr && k !== S.link?.chr) SHARDS.delete(k); }
+  return p;
+}
+async function loadShard(chr) {
+  const opt = (n) => getJSON(n).catch((e) => { console.warn(e); return null; });
+  const [j, aj, rj, mj, oj] = await Promise.all([getJSON(`${chr}.json`), opt(`atac_${chr}.json`), opt(`rna_${chr}.json`), opt(`mir_${chr}.json`), opt(`mot_${chr}.json`)]);
+  const linked = b64(j.linked, Uint16Array), lmap = new Int32Array(j.n).fill(-1); linked.forEach((p, k) => { lmap[p] = k; });
+  const F = M.flag_bytes === 4 ? Uint32Array : Uint16Array;
+  return { chr, start: b64(j.start, Uint32Array), lmap, genes: j.genes,
+    p2g: { peak: b64(j.p2g.peak, Uint16Array), gene: b64(j.p2g.gene, Uint16Array), corr: b64(j.p2g.corr, Int8Array) },
+    tri: { tf: b64(j.tri.tf, Uint16Array), peak: b64(j.tri.peak, Uint16Array), gene: b64(j.tri.gene, Uint16Array), w: b64(j.tri.w, Int8Array), src: j.tri.src ? b64(j.tri.src, F) : null },
+    atac: aj && ATRK ? coverage(aj, ATRK) : null, rna: rj && TRK ? coverage(rj, TRK) : null,
+    mir: mj ? { cpg: b64(mj.cpg, Uint32Array), meth: b64(mj.meth, Uint8Array) } : null,
+    mo: oj ? { peak: b64(oj.peak, Uint16Array), tf: b64(oj.tf, Uint16Array), off: b64(oj.off, Uint16Array), w: b64(oj.w, Uint8Array),
+      minus: b64(oj.minus, Uint8Array), sc: b64(oj.sc, Uint8Array), seq: b64(oj.seq, Uint8Array) } : null };
+}
+function grp(man, k, ci) { if (!man) return -1; return man.groups.indexOf(`${CONDS[ci]}_${M.cts[k].key}`); }
+const light = (hex) => { const v = hex.replace("#", ""), c = [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16)); return `rgb(${c.map((x) => Math.round(x + (255 - x) * 0.55)).join(",")})`; };
+const pairW = () => (P.w && P.w[NX * S.net + S.ct]) || null;
+const wv = (i) => { const w = pairW(); return w ? w[i] / 1000 : P.wb[i] / 100; };
+const isTri = (T, k) => !(M.no_regions || []).includes(M.nets[S.net].key) && (!T.src || ((T.src[k] >>> (NX * S.net + S.ct)) & 1));
+
+// ---------- DNA sequence of linked regions (2 bits per base) and motif strings ----------
+const BASES = "ACGT", COMP = { A: "T", C: "G", G: "C", T: "A", N: "N" };
+const SEQW = () => Math.ceil(M.peak / 4);
+function base(sh, p, j) { const r = sh.lmap[p]; if (r < 0 || !sh.mo || j < 0 || j >= M.peak) return -1; return (sh.mo.seq[r * SEQW() + (j >> 2)] >> (6 - 2 * (j & 3))) & 3; }
+function seqStr(sh, p, j0, j1) { let t = ""; for (let j = j0; j < j1; j++) { const v = base(sh, p, j); t += v < 0 ? "N" : BASES[v]; } return t; }
+const revcomp = (s) => [...s].reverse().map((c) => COMP[c.toUpperCase()] ? (c === c.toLowerCase() ? COMP[c.toUpperCase()].toLowerCase() : COMP[c]) : c).join("");
+const rcPWM = (m) => m.slice().reverse().map((c) => [c[3], c[2], c[1], c[0]]);
+// IUPAC codes for each set of bases (NC-IUB 1984); key = bases in ACGT order
+const IUPAC = { A: "A", C: "C", G: "G", T: "T", AG: "R", CT: "Y", CG: "S", AT: "W", GT: "K", AC: "M", CGT: "B", AGT: "D", ACT: "H", ACG: "V", ACGT: "N" };
+const consensus = (m) => m.map((c) => { const k = c.indexOf(Math.max(...c)); return c[k] >= 0.5 ? BASES[k] : BASES[k].toLowerCase(); }).join("");
+const iupac = (m) => m.map((c) => IUPAC[[0, 1, 2, 3].filter((k) => c[k] >= 0.25).map((k) => BASES[k]).join("")] || "N").join("");
+
+// ---------- igv.js data sources: our decoded arrays, served to igv.js on request ----------
+// coverage as igv wig features: fine bins where they exist, the coarse bin's mean elsewhere (what the grnviewer page draws)
+function covSource(which, g) {
+  return { supportsWholeGenome: () => false, async getFeatures({ chr, start, end }) {
+    const sh = await shard(chr), tr = sh && sh[which]; if (!tr || g < 0) return [];
+    const nC = tr.cS.length, nF = tr.fS.length, CW = tr.CW, FW = tr.FW, out = [];
+    const push = (s, e, v) => { if (v > 0 && e > s) out.push({ chr, start: s, end: e, value: v }); };
+    let i = Math.max(0, lowerBound(tr.cS, start - CW)), f = Math.max(0, lowerBound(tr.fS, start - FW));
+    const i1 = lowerBound(tr.cS, end), f1 = lowerBound(tr.fS, end);
+    while (i < i1 || f < f1) {
+      const cs = i < i1 ? tr.cS[i] : Infinity, fs = f < f1 ? tr.fS[f] : Infinity;
+      if (fs < cs) { push(fs, fs + FW, RNAQ[tr.f[g * nF + f]]); f++; continue; }
+      const ce = cs + CW, cv = RNAQ[tr.c[g * nC + i]]; let cur = cs;
+      while (f < f1 && tr.fS[f] < ce) { const s = tr.fS[f]; push(cur, s, cv); push(s, s + FW, RNAQ[tr.f[g * nF + f]]); cur = s + FW; f++; }
+      push(cur, ce, cv); i++;
+    }
+    return out; } };
+}
+// 5mC per CpG for one MSN context; h = 0 Control, 1 HD; 255 = no call
+function methSource(c, h) {
+  return { supportsWholeGenome: () => false, async getFeatures({ chr, start, end }) {
+    const sh = await shard(chr), mir = sh && sh.mir; if (!mir) return []; const nv = 2 * NX, out = [];
+    for (let i = lowerBound(mir.cpg, start), i1 = lowerBound(mir.cpg, end); i < i1; i++) { const v = mir.meth[i * nv + 2 * c + h];
+      if (v !== 255) out.push({ chr, start: mir.cpg[i], end: mir.cpg[i] + 2, value: v }); }
+    return out; } };
+}
+const geneSource = { supportsWholeGenome: () => false, async getFeatures({ chr, start, end }) {
+  const sh = await shard(chr); if (!sh) return [];
+  return sh.genes.filter((q) => q[2] > start && q[1] < end).map(([gi, s, e, st, bs, bst]) => ({ chr, start: s, end: e, strand: st, name: M.genes[gi],
+    exons: bs.map((w, k) => ({ start: s + bst[k], end: s + bst[k] + w })) })); } };
+// loops: region midpoint to the gene's TSS. Height = |r| for Epiregulon (missing r drawn at 0.3, as on the grnviewer page),
+// = ANANSE's predicted binding for ANANSE (the network's own "loop: score" setting); the gene's other loops exist only for |r|
+const MODE = () => M.nets[S.net].loop || "corr";
+const LOOP_NAME = () => MODE() === "score" ? "Loops (height = predicted binding)" : "Loops (height = |r|)";
+const loopSource = { supportsWholeGenome: () => false, async getFeatures({ chr }) {
+  const L = S.link; if (!L || chr !== L.chr) return [];
+  const sh = L.sh, score = MODE() === "score", tss = M.tss[L.g], mk = (p, color, thickness, kind, w) => { const s = sh.start[p], r = L.corr.get(p);
+    return { chr, chr1: chr, start1: s, end1: s + M.peak, chr2: chr, start2: tss, end2: tss + 1, start: Math.min(s, tss), end: Math.max(s + M.peak, tss + 1),
+      score: score ? Math.max(0, Math.min(1, w ?? 0)) : Math.abs(r ?? 0.3), r: r == null ? "not computed" : r.toFixed(2),
+      ...(score ? { binding: w == null ? "–" : w.toFixed(2) } : {}), color, thickness, link: kind, name: kind }; };
+  const regSet = new Set(L.regs.map((r) => r.p)), out = [];
+  if (!score && (S.others || !L.regs.length)) L.gpeaks.forEach((p) => { if (!regSet.has(p)) out.push(mk(p, "rgb(170,170,170)", 1, `other region linked to ${M.genes[L.g]}`)); });
+  L.regs.forEach((r) => out.push(mk(r.p, "rgb(31,95,191)", 2.5, `${M.tfs[L.t]} → ${M.genes[L.g]}`, r.w)));
+  return out; } };
+// the TF's motif matches (strong inside its regions for this gene, faint elsewhere)
+function motifHits(L, start, end) {               // indices into L.sh.mo of the TF's matches overlapping [start, end)
+  const mo = L && L.sh.mo, out = []; if (!mo || L.t < 0) return out;
+  for (let k = lowerBound(mo.tf, L.t), k1 = lowerBound(mo.tf, L.t + 1); k < k1; k++) { const s = L.sh.start[mo.peak[k]] + mo.off[k]; if (s < end && s + mo.w[k] > start) out.push(k); }
+  return out;
+}
+const motifSource = { supportsWholeGenome: () => false, async getFeatures({ chr, start, end }) {
+  const L = S.link; if (!L || chr !== L.chr) return [];
+  const mo = L.sh.mo, regSet = new Set(L.regs.map((r) => r.p));
+  return motifHits(L, start, end).map((k) => { const s = L.sh.start[mo.peak[k]] + mo.off[k];
+    return { chr, start: s, end: s + mo.w[k], strand: mo.minus[k] ? "-" : "+", name: M.tfs[L.t], score: (mo.sc[k] / 8).toFixed(1),
+      color: regSet.has(mo.peak[k]) ? "rgb(196,32,32)" : "rgb(230,170,170)" }; }); } };
+
+// ---------- tracks ----------
+const MOTIF = () => `${S.link && S.link.t >= 0 ? M.tfs[S.link.t] : "TF"} motif`;
+function signalTracks() {
+  const tr = [], ms = M.ctx.map((x) => x.ct);           // the two MSN types; Control above, HD below on one scale per assay
+  let order = 10;
+  for (const [c, k] of ms.entries()) { const col = M.cts[k].color, lc = light(col), nm = M.cts[k].short;
+    for (const [ci, cond] of CONDS.entries()) tr.push({ name: `${nm} ATAC ${cond}`, type: "wig", featureSource: covSource("atac", grp(ATRK, k, ci)),
+      color: ci ? lc : col, flipAxis: ci === 1, autoscaleGroup: `atac_${k}`, height: 45, order: order++ });
+    for (const [ci, cond] of CONDS.entries()) tr.push({ name: `${nm} RNA ${cond}`, type: "wig", featureSource: covSource("rna", grp(TRK, k, ci)),
+      color: ci ? lc : col, flipAxis: ci === 1, autoscaleGroup: `rna_${k}`, height: 45, order: order++ });
+    for (const [h, cond] of CONDS.entries()) tr.push({ name: `${nm} 5mC % ${cond}`, type: "wig", featureSource: methSource(c, h), graphType: "points",
+      windowFunction: "none", min: 0, max: 100, color: h ? lc : col, flipAxis: h === 1, height: 35, order: order++ });
+  }
+  return tr;
+}
+const loopTrack = () => ({ name: LOOP_NAME(), type: "interact", featureSource: loopSource, arcType: "proportional", arcOrientation: "UP",
+  min: 0, max: 1, logScale: false, alpha: 0, showBlocks: true, height: 140, order: 2 });
+const motifTrack = () => ({ name: MOTIF(), type: "annotation", featureSource: motifSource, displayMode: "COLLAPSED", height: 25, order: 3 });
+
+let loopT = null, motT = null;                        // the two link tracks, made at start and refreshed in place
+async function redrawLinkTracks() {                    // a new TF or gene: refetch the loop and motif tracks, mark the regions
+  if (motT) motT.name = MOTIF();
+  if (loopT) loopT.name = LOOP_NAME();
+  $("o-others").disabled = MODE() === "score";          // ANANSE draws its own bound regions only
+  for (const t of [loopT, motT]) if (t) { t.clearCachedFeatures(); t.updateViews(); }
+  browser.clearROIs();
+  if (S.link && S.link.regs.length) await browser.loadROI({ name: "Linked regions", color: "rgba(31,95,191,0.10)", features: S.link.regs.map((r) => ({ chr: S.link.chr, start: r.s, end: r.s + M.peak })) });
+}
+function fitLocus() {
+  const L = S.link, tss = M.tss[L.g], ps = (L.regs.length ? L.regs.map((r) => r.p) : L.gpeaks).map((p) => L.sh.start[p]);
+  let a = Math.min(tss, ...ps), b = Math.max(tss, ...ps.map((s) => s + M.peak));
+  if (!ps.length) { const gs = L.sh.genes.find((q) => q[0] === L.g); if (gs) { a = gs[1]; b = gs[2]; } }   // a gene with no linked region: show the gene
+  const pad = Math.max(2000, (b - a) * 0.08);
+  return browser.search(`${L.chr}:${Math.max(1, Math.round(a - pad))}-${Math.round(b + pad)}`);
+}
+
+// ---------- links: the same rules as the grnviewer page ----------
+// regions per TF for gene g in the shown network and context: the region rows the page draws as that link's loops (P.nreg counts
+// every network and context together, so it is not used for the table)
+function regCount(sh, g) {
+  const T = sh.tri, seen = new Map();
+  for (let k = 0; k < T.tf.length; k++) if (T.gene[k] === g && isTri(T, k)) { let s = seen.get(T.tf[k]); if (!s) seen.set(T.tf[k], (s = new Set())); s.add(T.peak[k]); }
+  const n = new Map(); seen.forEach((s, t) => n.set(t, s.size)); return n;
+}
+const nregOf = (i) => (S.nr && S.nr.get(P.ti[i])) || 0;
+function geneRows(g) {
+  const bit = NX * S.net + S.ct, rows = [];
+  for (let i = 0; i < N; i++) if (P.gi[i] === g && ((P.fl[i] >>> bit) & 1) && nregOf(i)) rows.push(i);
+  return pairW() ? rows.sort((a, b) => wv(b) - wv(a)) : rows.sort((a, b) => nregOf(b) - nregOf(a) || M.tfs[P.ti[a]].localeCompare(M.tfs[P.ti[b]]));
+}
+const wTxt = (i) => (pairW() ? wv(i).toFixed(3) : "–");
+function linkFor(t, g, sh) {
+  const T = sh.tri, regs = [], seen = new Set();
+  for (let k = 0; k < T.tf.length; k++) if (T.tf[k] === t && T.gene[k] === g && isTri(T, k) && !seen.has(T.peak[k])) { seen.add(T.peak[k]); regs.push({ p: T.peak[k], w: T.w[k] / 100 }); }
+  const corr = new Map(); for (let k = 0; k < sh.p2g.peak.length; k++) if (sh.p2g.gene[k] === g) corr.set(sh.p2g.peak[k], sh.p2g.corr[k] / 100);
+  regs.forEach((r) => { r.s = sh.start[r.p]; });
+  return { t, g, chr: sh.chr, sh, regs, corr, gpeaks: [...corr.keys()] };
+}
+// TF expression in the shown MSN type: [TPM control, TPM HD, log2FC HD/control, padj]
+const tfx = (t) => (TFX && TFX[M.ctx[S.ct].key] && TFX[M.ctx[S.ct].key][M.tfs[t]]) || null;
+const fT = (v) => v == null ? '<span class="na">–</span>' : v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
+const fFC = (v, q) => v == null ? '<span class="na">–</span>' : `<span class="${q != null && q < 0.05 ? (v > 0 ? "up" : "down") : ""}">${v > 0 ? "+" : ""}${v.toFixed(2)}</span>`;
+const fQ = (q) => q == null ? '<span class="na">–</span>' : q < 0.001 ? q.toExponential(1) : q.toFixed(3);
+// table sort (header click): a display order only; S.rows stays in network order, which picks the default TF.
+// Empty values (–) go last in both directions. First click: padj and TF ascending, the rest descending; a second click flips it.
+const SORT_KEY = { tf: (i) => M.tfs[P.ti[i]], w: (i) => (pairW() ? wv(i) : null), nreg: (i) => nregOf(i),
+  tpmC: (i) => (tfx(P.ti[i]) || [])[0], tpmH: (i) => (tfx(P.ti[i]) || [])[1], fc: (i) => (tfx(P.ti[i]) || [])[2], padj: (i) => (tfx(P.ti[i]) || [])[3] };
+function sortedRows() {
+  if (!S.sort) return S.rows;
+  const f = SORT_KEY[S.sort.k], d = S.sort.dir, v = new Map(S.rows.map((i) => [i, f(i)]));
+  return S.rows.slice().sort((a, b) => { const x = v.get(a), y = v.get(b), nx = x == null, ny = y == null;
+    if (nx || ny) return nx - ny;
+    return d * (typeof x === "string" ? x.localeCompare(y) : x - y); });
+}
+function setSort(k) {
+  S.sort = S.sort && S.sort.k === k ? { k, dir: -S.sort.dir } : { k, dir: k === "padj" || k === "tf" ? 1 : -1 };
+  $("tbl-head").querySelectorAll("th[data-k]").forEach((th) => th.setAttribute("aria-sort", th.dataset.k !== k ? "none" : S.sort.dir > 0 ? "ascending" : "descending"));
+  renderTable(geneIdx.get(S.gene.trim().toUpperCase()));
+}
+function renderTable(g) {
+  const x = M.ctx[S.ct];
+  $("tfx-head").textContent = `TF expression · ${M.cts[x.ct].short}`;
+  $("tbl-sum").textContent = g == null ? "Links for the gene" : `${S.rows.length} TF links to ${M.genes[g]} with a region · ${M.nets[S.net].short} · ${x.label}`;
+  $("tbl").innerHTML = sortedRows().map((i) => { const e = tfx(P.ti[i]) || [];
+    return `<tr data-i="${i}" aria-selected="${!!S.link && P.ti[i] === S.link.t}"><td>${esc(M.tfs[P.ti[i]])}</td><td>${esc(M.genes[P.gi[i]])}</td><td class="num">${wTxt(i)}</td><td class="num">${nregOf(i)}</td>`
+      + `<td class="num l">${fT(e[0])}</td><td class="num">${fT(e[1])}</td><td class="num">${fFC(e[2], e[3])}</td><td class="num">${fQ(e[3])}</td></tr>`; }).join("");
+}
+let ticket = 0;
+async function update(refit) {
+  const my = ++ticket, gName = S.gene.trim().toUpperCase(), g = geneIdx.get(gName);
+  if (g == null) { status(`“${S.gene}” isn't a gene in this dataset.`); return; }
+  const chr = M.gchr[g];
+  if (!M.chroms[chr]) { status(`${M.genes[g]} is on ${chr}, which has no data on this page.`); return; }
+  if (!SHARDS.has(chr)) status(`Loading ${chr}…`);
+  let sh; try { sh = await shard(chr); } catch (e) { status(`${chr} didn't load (${e.message}). Try again.`); return; }
+  if (my !== ticket) return;                           // a newer search started while this chromosome loaded
+  S.nr = regCount(sh, g); S.rows = geneRows(g);
+  const tq = S.tf.trim().toUpperCase(); const row = tq ? S.rows.find((i) => M.tfs[P.ti[i]].toUpperCase() === tq) : S.rows[0];
+  const t = row != null ? P.ti[row] : (tfIdx.get(tq) ?? -1);
+  S.link = linkFor(t, g, sh);
+  renderTable(g);
+  const e = t >= 0 ? tfx(t) : null, eTxt = e ? ` · ${M.tfs[t]} TPM ${fT(e[0])} / ${fT(e[1])} (Control / HD)` : "";
+  status(row == null ? (tq ? `${tq} → ${M.genes[g]} isn't in ${M.nets[S.net].short} (${M.ctx[S.ct].key}); showing the gene's own loops.` : `${M.genes[g]} has no TF link with a region in ${M.nets[S.net].short}; showing its own loops.`)
+    : `${M.tfs[t]} → ${M.genes[g]}: ${S.link.regs.length} region${S.link.regs.length === 1 ? "" : "s"}` + (pairW() ? `, weight ${wTxt(row)}` : "") + eTxt.replace(/<[^>]+>/g, ""));
+  if (refit) await fitLocus();
+  await redrawLinkTracks();
+}
+
+// ---------- motif hover box ----------
+const tip = $("mtip"), CW = 22;
+function drawLogo(c, m) {                               // sequence logo in bits, one 22 px column per position
+  const h = 44, dpr = window.devicePixelRatio || 1; c.style.width = m.length * CW + "px"; c.style.height = h + "px"; c.width = m.length * CW * dpr; c.height = h * dpr;
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, m.length * CW, h);
+  g.font = "700 20px Menlo, Consolas, monospace"; g.textBaseline = "alphabetic"; g.textAlign = "center";
+  const mt = g.measureText("G"), capH = mt.actualBoundingBoxAscent || 15, capW = mt.width || 12, cs = getComputedStyle(document.documentElement);
+  const col = ["--bA", "--bC", "--bG", "--bT"].map((v) => cs.getPropertyValue(v).trim());
+  m.forEach((p, i) => { const ic = 2 + p.reduce((s, q) => s + (q > 0 ? q * Math.log2(q) : 0), 0); let y = h - 1;
+    [0, 1, 2, 3].sort((a, b) => p[a] - p[b]).forEach((bi) => { const hh = p[bi] * ic / 2 * (h - 2); if (hh < 0.5) return;
+      g.save(); g.translate(i * CW + CW / 2, y); g.scale((CW - 3) / capW, hh / capH); g.fillStyle = col[bi]; g.fillText(BASES[bi], 0, 0); g.restore(); y -= hh; }); });
+}
+function tipHTML(L, k, nHere) {
+  const mo = L.sh.mo, p = mo.peak[k], off = mo.off[k], w = mo.w[k], minus = !!mo.minus[k], s = L.sh.start[p] + off, tf = M.tfs[L.t];
+  const site = seqStr(L.sh, p, off, off + w), fl = 6, left = seqStr(L.sh, p, Math.max(0, off - fl), off).toLowerCase(), right = seqStr(L.sh, p, off + w, Math.min(M.peak, off + w + fl)).toLowerCase();
+  const pwm0 = PWM[tf] || null, pwm = pwm0 && (minus ? rcPWM(pwm0) : pwm0);
+  const inReg = L.regs.some((r) => r.p === p);
+  let h = `<div class="hd">${esc(tf)} motif match · ${minus ? "− strand" : "+ strand"} · score ${(mo.sc[k] / 8).toFixed(1)}</div>`
+    + `<div class="meta">${L.chr}:${fmtInt(s + 1)}-${fmtInt(s + w)} (${w} bp) · ${inReg ? `in a region linked to ${esc(M.genes[L.g])}` : `in a region linked to other genes, not ${esc(M.genes[L.g])}`}${nHere > 1 ? ` · ${nHere} matches under the cursor, nearest shown` : ""}</div>`
+    + `<div class="mono">genome (+): ${left}<b style="color:var(--motif)">${site}</b>${right}</div>`;
+  if (!pwm || pwm.length !== w) return h + `<div class="meta">${pwm ? "PWM width differs from the match; PWM not shown" : "no PWM stored for this TF"}</div>`;
+  const cons = consensus(pwm), iu = iupac(pwm), tdr = (str, cls) => [...str].map((c, i) => `<td${cls ? cls(c, i) : ""}>${c}</td>`).join("");
+  const mm = (c, i) => (c.toUpperCase() !== cons[i].toUpperCase() ? ' class="mm"' : "");
+  const shade = (v) => `background:rgba(31,95,191,${(v * 0.55).toFixed(2)})`;
+  h += `<table class="pwm"><tr><th>logo (bits)</th><td class="lg" colspan="${w}"><canvas></canvas></td></tr>`
+    + `<tr class="seq"><th>site (+)</th>${tdr(site, mm)}</tr>`
+    + `<tr><th>consensus</th>${tdr(cons)}</tr><tr><th>IUPAC</th>${tdr(iu)}</tr>`
+    + [0, 1, 2, 3].map((b, r) => `<tr${r === 0 ? ' class="sep"' : ""}><th>PWM ${BASES[b]}</th>${pwm.map((c) => `<td style="${shade(c[b])}">${c[b] >= 0.995 ? "1" : c[b].toFixed(2).replace(/^0/, "")}</td>`).join("")}</tr>`).join("")
+    + `</table>`;
+  if (minus) h += `<div class="meta mono">on the motif's own (−) strand: site ${revcomp(site)} · consensus ${consensus(pwm0)} · IUPAC ${iupac(pwm0)}</div>`;
+  return h;
+}
+function hideTip() { tip.style.display = "none"; tip.dataset.k = ""; }
+function onMove(e) {
+  const L = S.link, vp = motT && motT.trackView && motT.trackView.viewports && motT.trackView.viewports[0], el = vp && vp.viewportElement;
+  if (!L || !L.sh.mo || !el || e.buttons) return hideTip();
+  const r = el.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return hideTip();
+  const fr = vp.referenceFrame || browser.referenceFrameList[0]; if (!fr || fr.chr !== L.chr) return hideTip();
+  const bp = fr.start + (e.clientX - r.left) * fr.bpPerPixel, tol = Math.max(1, 3 * fr.bpPerPixel), mo = L.sh.mo;
+  const hits = motifHits(L, bp - tol, bp + tol); if (!hits.length) return hideTip();
+  const mid = (k) => L.sh.start[mo.peak[k]] + mo.off[k] + mo.w[k] / 2, k = hits.reduce((a, b) => (Math.abs(mid(b) - bp) < Math.abs(mid(a) - bp) ? b : a));
+  const key = `${L.t}:${k}:${hits.length}`;
+  if (tip.dataset.k !== key) { tip.dataset.k = key; tip.innerHTML = tipHTML(L, k, hits.length); const c = tip.querySelector("canvas"), pw = PWM[M.tfs[L.t]];
+    if (c && pw) drawLogo(c, mo.minus[k] ? rcPWM(pw) : pw); }
+  tip.style.display = "block";
+  const tw = tip.offsetWidth, th = tip.offsetHeight; let x = e.clientX + 14, y = e.clientY + 16;
+  if (x + tw > innerWidth - 8) x = Math.max(8, e.clientX - tw - 14); if (y + th > innerHeight - 8) y = Math.max(8, e.clientY - th - 16);
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+
+// ---------- start ----------
+async function start() {
+  try {
+    const [m, ab] = await Promise.all([getJSON("meta.json"), getJSON("pairs.json")]);
+    M = m; N = M.npairs; NC = M.cts.length; NX = M.ctx.length; CONDS = M.conds;
+    P = { ti: b64(ab.ti, Uint16Array), gi: b64(ab.gi, Uint16Array), fl: b64(ab.flags, M.flag_bytes === 4 ? Uint32Array : Uint16Array),
+      nreg: b64(ab.nreg, Uint8Array), wb: b64(ab.wb, Int8Array), w: (ab.w || []).map((s) => (s ? b64(s, Int16Array) : null)) };
+    tfIdx = new Map(M.tfs.map((t, i) => [t.toUpperCase(), i])); geneIdx = new Map(M.genes.map((g, i) => [g.toUpperCase(), i]));
+    $("tf-list").innerHTML = M.tfs.map((t) => `<option value="${esc(t)}">`).join("");
+    [TRK, ATRK] = await Promise.all([getJSON("rna_tracks.json"), getJSON("atac_tracks.json")]);
+    const [pw, tx] = await Promise.all([getJSON("motifs.json").catch(() => ({})), getJSON("tf_expr.json").catch(() => null)]); PWM = pw; TFX = tx;
+
+    // only the two networks we keep: competing-TF bulk Epiregulon and ANANSE (plain bulk and single-cell Epiregulon dropped)
+    const KEEP = { bulk_enet: "Epiregulon (competing TFs)", ananse: "ANANSE" };
+    S.net = M.nets.findIndex((n) => n.key === "bulk_enet");
+    $("net-seg").innerHTML = M.nets.map((n, k) => KEEP[n.key] ? `<button type="button" data-k="${k}" aria-pressed="${k === S.net}" title="${esc(n.label)}">${esc(KEEP[n.key])}</button>` : "").join("");
+    $("ctx-seg").innerHTML = M.ctx.map((x, c) => `<button type="button" data-c="${c}" aria-pressed="${c === S.ct}">${esc(x.label)}</button>`).join("");
+    $("net-seg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.net = +b.dataset.k;
+      $("net-seg").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b)); update(true); });
+    $("ctx-seg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.ct = +b.dataset.c;
+      $("ctx-seg").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b)); update(true); });
+
+    const g0 = geneIdx.get(S.gene), chr0 = g0 != null ? M.gchr[g0] : "chr6";
+    status(`Loading ${chr0}…`); await shard(chr0);
+    status("Starting igv.js…");
+    // genome: on the web, hg38 DNA from UCSC (the same 2bit + chrom.sizes files igv.js 3.8.10 uses for its built-in hg38), so the
+    // sequence shows when zoomed in; igv.js reads only the byte ranges in view. Offline (file://), or if UCSC can't be reached,
+    // chromosome sizes only (no sequence, no outside server).
+    const REF_SIZES = () => ({ id: "hg38", name: "hg38", fastaURL: new File([CHROM_SIZES], "hg38.chrom.sizes.txt"), format: "chromsizes" });
+    const REF_SEQ = { id: "hg38", name: "hg38", twoBitURL: "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.2bit",
+      chromSizesURL: "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.chrom.sizes" };
+    const igvOpts = (reference) => ({
+      reference,
+      loadDefaultGenomes: false, showIdeogram: false, showSVGButton: false, showCircularViewButton: false,
+      showMultiSelectButton: false, showCursorTrackingGuideButton: false, showCenterGuideButton: false,
+      locus: g0 != null ? `${chr0}:${Math.max(1, M.tss[g0] - 200000)}-${M.tss[g0] + 200000}` : "chr6:165300000-165700000",
+      tracks: [{ name: "Genes", type: "annotation", featureSource: geneSource, displayMode: "EXPANDED", color: "rgb(30,30,30)", height: 70, order: 1 },
+        loopTrack(), motifTrack(), ...signalTracks()] });
+    if (LOCAL) browser = await igv.createBrowser($("igv"), igvOpts(REF_SIZES()));
+    else try { browser = await igv.createBrowser($("igv"), igvOpts(REF_SEQ)); }
+    catch (e) {
+      console.warn("hg38 sequence from UCSC could not be loaded; chromosome sizes only:", e);
+      if (igv.removeAllBrowsers) igv.removeAllBrowsers(); $("igv").innerHTML = "";
+      browser = await igv.createBrowser($("igv"), igvOpts(REF_SIZES()));
+    }
+    loopT = browser.findTracks((t) => t.type === "interact")[0]; motT = browser.findTracks((t) => t.type === "annotation" && / motif$/.test(t.name || ""))[0];
+    document.addEventListener("mousemove", onMove, { passive: true });
+    document.addEventListener("scroll", hideTip, { passive: true, capture: true });
+    await update(true);
+  } catch (e) {
+    status(`The page didn't load (${e.message}). Reload the page to try again.`); console.error(e);
+  }
+}
+let tmr; const deb = (f) => { clearTimeout(tmr); tmr = setTimeout(f, 300); };
+$("q-gene").addEventListener("input", (e) => { S.gene = e.target.value; S.tf = ""; $("q-tf").value = ""; deb(() => browser && update(true)); });
+$("q-tf").addEventListener("input", (e) => { S.tf = e.target.value; deb(() => browser && update(true)); });
+$("o-others").addEventListener("change", (e) => { S.others = e.target.checked; if (browser) redrawLinkTracks(); });
+$("tbl").addEventListener("click", (e) => { const tr = e.target.closest("tr"); if (!tr) return; S.tf = M.tfs[P.ti[+tr.dataset.i]]; $("q-tf").value = S.tf; update(true); });
+$("tbl-head").addEventListener("click", (e) => { const b = e.target.closest("button[data-k]"); if (b && M && P) setSort(b.dataset.k); });
+start();
+})();
+</script>
+</body>
+</html>
